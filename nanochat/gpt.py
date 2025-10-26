@@ -119,6 +119,12 @@ class CausalSelfAttention(nn.Module):
         """
         batch_size, seq_len, _ = x.size()
 
+        if x.dtype == torch.bfloat16 and self.c_q.weight.dtype != torch.bfloat16:
+            self.c_q.bfloat16()
+            self.c_k.bfloat16()
+            self.c_v.bfloat16()
+            self.c_proj.bfloat16()
+
         # Project the input to get queries, keys, and values
         q: Tensor = self.c_q(x).view(batch_size, seq_len, self.n_head, self.head_dim)
         k: Tensor = self.c_k(x).view(batch_size, seq_len, self.n_kv_head, self.head_dim)
@@ -126,9 +132,9 @@ class CausalSelfAttention(nn.Module):
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
-        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(
-            k, cos, sin
-        )  # QK rotary embedding
+        # QK rotary embedding
+        q = apply_rotary_emb(q, cos, sin)
+        k = apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)  # QK norm
         # make head be batch dicm,
         # i.e. (batch_size, seq_len, num_heads, head_dim)
@@ -138,10 +144,10 @@ class CausalSelfAttention(nn.Module):
         # Apply KV cache: insert current k,v into cache, get the full view so far
         if kv_cache is not None:
             k, v = kv_cache.insert_kv(self.layer_idx, k, v)
-        num_queries = q.size(2)  # number of queries in this forward pass
-        num_keys = k.size(
-            2
-        )  # number of keys/values in total (in the cache + current forward pass)
+        # number of queries in this forward pass
+        num_queries = q.size(2)
+        # number of keys/values in total (in the cache + current forward pass)
+        num_keys = k.size(2)
 
         # Apply MQA: replicate the key/value heads for each query head
         nrep = self.n_head // self.n_kv_head
@@ -197,6 +203,10 @@ class MLP(nn.Module):
         Returns:
             输出张量，形状为 [batch_size, seq_len, n_embd]
         """
+        if x.dtype == torch.bfloat16 and self.c_fc.weight.dtype != torch.bfloat16:
+            self.c_fc.bfloat16()
+            self.c_proj.bfloat16()
+
         x = self.c_fc(x)
         x = F.relu(x).square()
         x = self.c_proj(x)
@@ -446,8 +456,8 @@ class GPT(nn.Module):
         """GPT 模型的前向传播
 
         Args:
-            idx: 输入的 token 索引张量，形状为 (B, T)
-            targets: 目标 token 索引张量，形状为 (B, T)，如果为 None 则返回 logits
+            idx: 输入的 token 索引张量，形状为 (batch_size, seq_len)
+            targets: 目标 token 索引张量，形状为 (batch_size, seq_len)，如果为 None 则返回 logits
             kv_cache: KV 缓存对象，用于加速推理
             loss_reduction: 损失缩减方式，可以是 "mean" 或 "sum"
 
@@ -484,9 +494,12 @@ class GPT(nn.Module):
             x = block(x, cos_sin, kv_cache)
         x = norm(x)
 
+        if x.dtype == torch.bfloat16 and self.lm_head.weight.dtype != torch.bfloat16:
+            self.lm_head.bfloat16()
+
         # Forward the lm_head (compute logits)
         softcap = 15
-        if targets is None:
+        if targets is not None:
             # training mode: compute and return the loss
             # TODO: experiment with Liger Kernels / chunked cross-entropy etc.
             logits = self.lm_head(x)
