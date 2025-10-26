@@ -24,7 +24,6 @@ from torch import Tensor
 from nanochat.common import get_dist_info
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
-from nanochat.engine import KVCache
 
 
 @dataclass
@@ -105,7 +104,7 @@ class CausalSelfAttention(nn.Module):
         self,
         x: Tensor,
         cos_sin: tuple[Tensor, Tensor],
-        kv_cache: KVCache,
+        kv_cache,
     ) -> Tensor:
         """
         前向传播函数
@@ -226,7 +225,7 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, cos_sin: tuple[Tensor, Tensor], kv_cache: KVCache) -> Tensor:
+    def forward(self, x, cos_sin: tuple[Tensor, Tensor], kv_cache) -> Tensor:
         """
         前向传播
 
@@ -441,7 +440,7 @@ class GPT(nn.Module):
         self,
         idx: Tensor,
         targets: Tensor = None,
-        kv_cache: KVCache = None,
+        kv_cache = None,
         loss_reduction: str = "mean",
     ) -> Tensor:
         """GPT 模型的前向传播
